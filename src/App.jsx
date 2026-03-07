@@ -1,416 +1,574 @@
 import { useState, useEffect, useRef } from "react";
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-const fmt = (n) =>
-  new Intl.NumberFormat("nb-NO", { style: "currency", currency: "NOK", maximumFractionDigits: 0 }).format(n);
+// ─── Helpers ───────────────────────────────────────────────────────────────
+const formatNOK = (val) => {
+  if (isNaN(val) || val === null) return "—";
+  return new Intl.NumberFormat("nb-NO", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
+};
 
-const fmtShort = (n) =>
-  n >= 1_000_000
-    ? `${(n / 1_000_000).toFixed(2).replace(/\.?0+$/, "")}M`
-    : `${(n / 1000).toFixed(0)}k`;
+const parseNOK = (str) => {
+  if (!str) return NaN;
+  const cleaned = str.replace(/\s/g, "").replace(/kr/gi, "").replace(/\./g, "").replace(",", ".");
+  return parseFloat(cleaned);
+};
 
-function calc(p25) {
-  const R = 0.25;
-  const inc26 = Math.max(0, Math.min(p25, 500_000) - 300_000) * R;
-  const p26 = p25 + inc26;
-  const inc27 = Math.max(0, Math.min(p25, 300_000) - 150_000) * R;
-  const p27 = p26 + inc27;
-  const inc28 = Math.max(0, Math.min(p25, 150_000)) * R;
-  const p28 = p27 + inc28;
-  const totalInc = inc26 + inc27 + inc28;
-  return { p25, p26, p27, p28, inc26, inc27, inc28, totalInc };
-}
+const getDealTier = (pct) => {
+  if (pct <= 0) return { label: "No Deal", emoji: "💸", color: "#ef4444", score: 0, desc: "The price has not dropped." };
+  if (pct < 5) return { label: "Marginal", emoji: "🤏", color: "#f97316", score: 15, desc: "Barely worth noting. Keep watching." };
+  if (pct < 15) return { label: "Decent", emoji: "👍", color: "#eab308", score: 35, desc: "A modest saving. Reasonable offer." };
+  if (pct < 25) return { label: "Good Deal", emoji: "✨", color: "#84cc16", score: 55, desc: "A solid discount. Good value." };
+  if (pct < 40) return { label: "Great Deal", emoji: "🔥", color: "#22c55e", score: 72, desc: "Impressive savings. Hard to ignore." };
+  if (pct < 60) return { label: "Excellent!", emoji: "⚡", color: "#10b981", score: 88, desc: "Outstanding value. Act quickly." };
+  return { label: "Legendary", emoji: "💎", color: "#6366f1", score: 100, desc: "Once-in-a-lifetime pricing. Don't hesitate." };
+};
 
-// ── Aurora canvas background ──────────────────────────────────────────────────
-function Aurora() {
-  const canvasRef = useRef(null);
+// ─── Animated Number ────────────────────────────────────────────────────────
+function useAnimatedNumber(target, duration = 800) {
+  const [display, setDisplay] = useState(0);
+  const rafRef = useRef(null);
+  const startRef = useRef(null);
+  const fromRef = useRef(0);
+
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    let t = 0;
-    let raf;
-    const resize = () => {
-      canvas.width = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
+    if (isNaN(target)) { setDisplay(0); return; }
+    fromRef.current = display;
+    startRef.current = null;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    const animate = (ts) => {
+      if (!startRef.current) startRef.current = ts;
+      const prog = Math.min((ts - startRef.current) / duration, 1);
+      const ease = 1 - Math.pow(1 - prog, 4);
+      setDisplay(fromRef.current + (target - fromRef.current) * ease);
+      if (prog < 1) rafRef.current = requestAnimationFrame(animate);
     };
-    window.addEventListener("resize", resize);
-    resize();
+    rafRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [target]);
 
-    const draw = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const w = canvas.width, h = canvas.height;
-
-      // waves
-      const waves = [
-        { color: "rgba(0,180,160,0.13)", yBase: 0.35, amp: 0.08, freq: 1.1, speed: 0.4 },
-        { color: "rgba(80,60,220,0.10)", yBase: 0.45, amp: 0.06, freq: 0.8, speed: 0.3 },
-        { color: "rgba(0,220,140,0.09)", yBase: 0.25, amp: 0.07, freq: 1.3, speed: 0.5 },
-        { color: "rgba(120,40,255,0.08)", yBase: 0.55, amp: 0.09, freq: 0.9, speed: 0.35 },
-      ];
-      waves.forEach(({ color, yBase, amp, freq, speed }) => {
-        const grad = ctx.createLinearGradient(0, 0, 0, h);
-        grad.addColorStop(0, "transparent");
-        grad.addColorStop(0.3, color);
-        grad.addColorStop(0.7, color);
-        grad.addColorStop(1, "transparent");
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.moveTo(0, h);
-        for (let x = 0; x <= w; x += 4) {
-          const y = h * yBase + Math.sin(x / w * Math.PI * 2 * freq + t * speed) * h * amp
-            + Math.sin(x / w * Math.PI * 3 * freq + t * speed * 1.3) * h * amp * 0.4;
-          ctx.lineTo(x, y);
-        }
-        ctx.lineTo(w, 0);
-        ctx.lineTo(0, 0);
-        ctx.closePath();
-        ctx.fill();
-      });
-
-      t += 0.015;
-      raf = requestAnimationFrame(draw);
-    };
-    draw();
-    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
-  }, []);
-  return <canvas ref={canvasRef} style={{ position: "fixed", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 0 }} />;
+  return display;
 }
 
-// ── animated number ───────────────────────────────────────────────────────────
-function AnimNum({ value, prefix = "", suffix = "" }) {
-  const [disp, setDisp] = useState(value);
-  const ref = useRef(value);
-  useEffect(() => {
-    const from = ref.current;
-    const to = value;
-    ref.current = to;
-    let start;
-    const duration = 500;
-    const step = (ts) => {
-      if (!start) start = ts;
-      const p = Math.min((ts - start) / duration, 1);
-      const ease = 1 - Math.pow(1 - p, 3);
-      setDisp(Math.round(from + (to - from) * ease));
-      if (p < 1) requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
-  }, [value]);
-  return <>{prefix}{new Intl.NumberFormat("nb-NO").format(disp)}{suffix}</>;
-}
+// ─── Circular Gauge ─────────────────────────────────────────────────────────
+function CircularGauge({ score, color, size = 190 }) {
+  const R = (size / 2) - 18;
+  const startAngle = -220;
+  const totalAngle = 260;
+  const cx = size / 2, cy = size / 2;
 
-// ── stacked bar ───────────────────────────────────────────────────────────────
-function StackedBar({ data, max }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {data.map(({ year, base, inc26, inc27, inc28, color }) => {
-        const total = base + inc26 + inc27 + inc28;
-        const pct = (v) => `${(v / max * 100).toFixed(2)}%`;
-        return (
-          <div key={year} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 38, fontFamily: "'Bebas Neue', cursive", fontSize: 15, color: "#8aadcc", textAlign: "right", flexShrink: 0 }}>{year}</div>
-            <div style={{ flex: 1, height: 34, borderRadius: 8, overflow: "hidden", display: "flex", background: "rgba(255,255,255,0.04)", position: "relative" }}>
-              {/* base (always NOK-free exempt + already-taxed portion) */}
-              <div style={{ width: pct(base), background: "linear-gradient(90deg,#1a4a6e,#1e5a80)", transition: "width 0.5s cubic-bezier(.4,0,.2,1)", height: "100%" }} />
-              {inc26 > 0 && <div style={{ width: pct(inc26), background: "linear-gradient(90deg,#00c9a7,#00e5b4)", transition: "width 0.5s cubic-bezier(.4,0,.2,1) 0.05s", height: "100%" }} />}
-              {inc27 > 0 && <div style={{ width: pct(inc27), background: "linear-gradient(90deg,#f7a600,#ffcc00)", transition: "width 0.5s cubic-bezier(.4,0,.2,1) 0.1s", height: "100%" }} />}
-              {inc28 > 0 && <div style={{ width: pct(inc28), background: "linear-gradient(90deg,#ff5e78,#ff8a65)", transition: "width 0.5s cubic-bezier(.4,0,.2,1) 0.15s", height: "100%" }} />}
-            </div>
-            <div style={{ width: 74, fontFamily: "'Bebas Neue', cursive", fontSize: 14, color: "#e0f0ff", textAlign: "right", flexShrink: 0, letterSpacing: 0.5 }}>
-              {fmtShort(total)} kr
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+  const polarToXY = (deg, r) => {
+    const rad = (deg * Math.PI) / 180;
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+  };
+  const arcPath = (from, to, r) => {
+    const s = polarToXY(from, r), e = polarToXY(to, r);
+    return `M ${s.x} ${s.y} A ${r} ${r} 0 ${Math.abs(to - from) > 180 ? 1 : 0} 1 ${e.x} ${e.y}`;
+  };
 
-// ── year card ─────────────────────────────────────────────────────────────────
-function YearCard({ year, price, increase, threshold, isBase, active, onClick }) {
-  const glowColor = isBase ? "#2979ff"
-    : increase === 0 ? "#00e5b4"
-      : increase < 30000 ? "#00e5b4"
-        : increase < 75000 ? "#f7a600"
-          : "#ff5e78";
+  const animScore = useAnimatedNumber(score, 900);
+  const filledAngle = (animScore / 100) * totalAngle;
 
   return (
-    <button onClick={onClick} style={{
-      background: active ? `rgba(255,255,255,0.09)` : "rgba(255,255,255,0.04)",
-      border: `1.5px solid ${active ? glowColor : "rgba(255,255,255,0.08)"}`,
-      borderRadius: 16,
-      padding: "14px 12px",
-      cursor: "pointer",
-      textAlign: "left",
-      transition: "all 0.3s ease",
-      boxShadow: active ? `0 0 24px ${glowColor}40` : "none",
-      flex: "1 1 0",
-      minWidth: 0,
-    }}>
-      <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 22, color: glowColor, letterSpacing: 1, lineHeight: 1 }}>{year}</div>
-      <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: "rgba(180,210,240,0.6)", marginTop: 2, marginBottom: 6 }}>
-        {isBase ? "Nåværende pris" : `Grense: ${fmtShort(threshold)} kr`}
-      </div>
-      <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 18, color: "#e8f4ff", letterSpacing: 0.5 }}>
-        {fmtShort(price)} kr
-      </div>
-      {!isBase && (
-        <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: increase > 0 ? glowColor : "rgba(180,210,240,0.5)", marginTop: 3, fontWeight: 600 }}>
-          {increase > 0 ? `+${fmtShort(increase)} kr` : "Ingen økning"}
-        </div>
+    <svg width={size} height={size} style={{ overflow: "visible", display: "block" }}>
+      <defs>
+        <filter id="glow2">
+          <feGaussianBlur stdDeviation="3" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <path d={arcPath(startAngle, startAngle + totalAngle, R)} fill="none" stroke="#1e293b" strokeWidth="13" strokeLinecap="round" />
+      {score > 0 && (
+        <path
+          d={arcPath(startAngle, startAngle + filledAngle, R)}
+          fill="none" stroke={color} strokeWidth="13" strokeLinecap="round"
+          filter="url(#glow2)" style={{ transition: "stroke 0.5s ease" }}
+        />
       )}
-    </button>
+      {[0, 25, 50, 75, 100].map((t) => {
+        const a = startAngle + (t / 100) * totalAngle;
+        const o = polarToXY(a, R + 20), i = polarToXY(a, R + 12);
+        return <line key={t} x1={i.x} y1={i.y} x2={o.x} y2={o.y} stroke="#334155" strokeWidth="2" strokeLinecap="round" />;
+      })}
+      <text x={cx} y={cy - 8} textAnchor="middle" fontSize="34" fontWeight="700" fontFamily="'Syne', sans-serif" fill={color} style={{ transition: "fill 0.5s ease" }}>
+        {Math.round(animScore)}
+      </text>
+      <text x={cx} y={cy + 14} textAnchor="middle" fontSize="10" fontFamily="'IBM Plex Mono', monospace" fill="#64748b" letterSpacing="3">
+        DEAL SCORE
+      </text>
+    </svg>
   );
 }
 
-// ── legend dot ────────────────────────────────────────────────────────────────
-function LegendDot({ color, label }) {
+// ─── Savings Meter ──────────────────────────────────────────────────────────
+function SavingsMeter({ savings, original }) {
+  const valid = !isNaN(savings) && !isNaN(original) && original > 0 && savings >= 0;
+  const pct = valid ? Math.min((savings / original) * 100, 100) : 0;
+  const animPct = useAnimatedNumber(pct, 1000);
+  const animSavings = useAnimatedNumber(valid ? savings : 0, 900);
+  const segments = [
+    { from: 0, to: 25, color: "#eab308" },
+    { from: 25, to: 50, color: "#84cc16" },
+    { from: 50, to: 75, color: "#22c55e" },
+    { from: 75, to: 100, color: "#6366f1" },
+  ];
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <div style={{ width: 10, height: 10, borderRadius: 3, background: color, flexShrink: 0 }} />
-      <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: "rgba(180,210,240,0.65)" }}>{label}</span>
-    </div>
-  );
-}
-
-// ── breakdown detail ──────────────────────────────────────────────────────────
-function BreakdownRow({ label, amount, color, show }) {
-  if (!show) return null;
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <div style={{ width: 8, height: 8, borderRadius: 2, background: color }} />
-        <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 13, color: "rgba(180,210,240,0.75)" }}>{label}</span>
+    <div style={{ width: "100%" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+        <span className="mono-label">SAVINGS METER</span>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#22c55e", fontWeight: 600 }}>
+          {valid ? `${formatNOK(animSavings)} kr` : "—"}
+        </span>
       </div>
-      <span style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 15, color: amount > 0 ? color : "rgba(180,210,240,0.35)", letterSpacing: 0.5 }}>
-        {amount > 0 ? `+${fmt(amount)}` : "—"}
-      </span>
+      <div style={{ display: "flex", height: 10, gap: 3, borderRadius: 99, overflow: "hidden" }}>
+        {segments.map((seg, i) => {
+          const fill = Math.max(0, Math.min(100, ((animPct - seg.from) / (seg.to - seg.from)) * 100));
+          return (
+            <div key={i} style={{ flex: 1, background: "#1e293b", borderRadius: 99, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${fill}%`, background: seg.color, boxShadow: fill > 50 ? `0 0 8px ${seg.color}88` : "none", transition: "width 0.1s" }} />
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5 }}>
+        {["0%", "25%", "50%", "75%", "100%"].map(t => (
+          <span key={t} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: "#334155" }}>{t}</span>
+        ))}
+      </div>
     </div>
   );
 }
 
-// ── main app ──────────────────────────────────────────────────────────────────
-export default function App() {
-  const [price, setPrice] = useState(500_000);
-  const [activeYear, setActiveYear] = useState("2026");
-  const [isDragging, setIsDragging] = useState(false);
+// ─── Price Bar ──────────────────────────────────────────────────────────────
+function PriceBar({ original, current }) {
+  const valid = !isNaN(original) && !isNaN(current) && original > 0 && current > 0;
+  const pct = valid ? Math.min((current / original) * 100, 100) : 100;
+  const animPct = useAnimatedNumber(pct, 900);
+  return (
+    <div style={{ width: "100%" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+        <span className="mono-label">ORIGINAL</span>
+        <span className="mono-label">CURRENT</span>
+      </div>
+      <div style={{ position: "relative", height: 10, background: "#0f172a", borderRadius: 99, overflow: "hidden", border: "1px solid #1e293b" }}>
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, #f59e0b22, #f59e0b44)", borderRadius: 99 }} />
+        <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${animPct}%`, background: "linear-gradient(90deg, #10b981, #22c55e)", borderRadius: 99, boxShadow: "0 0 12px #22c55e88", transition: "width 0.1s" }} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#f59e0b" }}>{valid ? `${formatNOK(original)} kr` : "—"}</span>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#22c55e" }}>{valid ? `${formatNOK(current)} kr` : "—"}</span>
+      </div>
+    </div>
+  );
+}
 
-  const { p25, p26, p27, p28, inc26, inc27, inc28, totalInc } = calc(price);
+// ─── Stat Card ──────────────────────────────────────────────────────────────
+function StatCard({ label, value, sub, accent, delay = 0 }) {
+  return (
+    <div className="stat-card" style={{ animationDelay: `${delay}ms`, borderColor: `${accent}33` }}>
+      <div style={{ position: "absolute", top: 0, right: 0, width: 60, height: 60, background: `radial-gradient(circle at top right, ${accent}18, transparent 70%)` }} />
+      <div className="mono-label" style={{ marginBottom: 8 }}>{label}</div>
+      <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "clamp(17px, 3vw, 22px)", fontWeight: 700, color: accent, lineHeight: 1.15, wordBreak: "break-word" }}>{value}</div>
+      {sub && <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "#64748b", marginTop: 5 }}>{sub}</div>}
+    </div>
+  );
+}
 
-  const years = [
-    { year: "2025", price: p25, increase: 0, threshold: 500_000, isBase: true },
-    { year: "2026", price: p26, increase: inc26, threshold: 300_000, isBase: false },
-    { year: "2027", price: p27, increase: inc27, threshold: 150_000, isBase: false },
-    { year: "2028", price: p28, increase: inc28, threshold: 0, isBase: false },
+// ─── NOK Input ──────────────────────────────────────────────────────────────
+function NOKInput({ label, value, onChange, placeholder }) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minWidth: 0 }}>
+      <label className="mono-label">{label}</label>
+      <div style={{ display: "flex", alignItems: "center", background: "#0f172a", border: `1px solid ${focused ? "#f59e0b" : "#1e293b"}`, borderRadius: 12, padding: "13px 15px", gap: 10, transition: "border-color 0.2s, box-shadow 0.2s", boxShadow: focused ? "0 0 0 3px #f59e0b22" : "none" }}>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 14, color: "#475569", flexShrink: 0 }}>kr</span>
+        <input
+          type="text" inputMode="decimal" value={value} placeholder={placeholder || "0,00"}
+          onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ background: "transparent", border: "none", outline: "none", fontFamily: "'IBM Plex Mono', monospace", fontSize: 17, fontWeight: 600, color: "#f1f5f9", width: "100%", minWidth: 0 }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Verdict Banner ─────────────────────────────────────────────────────────
+function VerdictBanner({ tier, pct }) {
+  if (!tier || pct <= 0) return null;
+  return (
+    <div className="verdict-banner" style={{
+      background: `linear-gradient(135deg, ${tier.color}18, ${tier.color}08)`,
+      border: `1px solid ${tier.color}44`,
+      boxShadow: `0 0 30px ${tier.color}18`,
+    }}>
+      {/* Left: emoji + label + desc */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
+        <span style={{ fontSize: 26, flexShrink: 0 }}>{tier.emoji}</span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "clamp(15px, 4vw, 20px)", fontWeight: 800, color: tier.color }}>{tier.label}</div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: "clamp(9px, 2.5vw, 11px)", color: "#64748b", marginTop: 2 }}>{tier.desc}</div>
+        </div>
+      </div>
+      {/* Right: big % */}
+      <div style={{ textAlign: "right", flexShrink: 0 }}>
+        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "clamp(24px, 6vw, 38px)", fontWeight: 800, color: tier.color, lineHeight: 1 }}>
+          {formatNOK(pct)}%
+        </div>
+        <div className="mono-label" style={{ marginTop: 3 }}>OFF ORIGINAL</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Deep Analytics ──────────────────────────────────────────────────────────
+function DeepAnalytics({ original, current }) {
+  const valid = !isNaN(original) && !isNaN(current) && original > 0 && current > 0 && current < original;
+  const savings = valid ? original - current : 0;
+  const pctOff = valid ? ((savings / original) * 100) : 0;
+  const breakEven = valid ? (original / savings).toFixed(1) : null;
+  const markup = valid ? (((original - current) / current) * 100) : 0;
+  const valueScore = valid ? Math.min(10, (pctOff / 10)).toFixed(1) : "—";
+
+  const items = [
+    { label: "MARKUP TO ORIGINAL", value: valid ? `+${formatNOK(markup)}%` : "—", sub: "from current price", color: "#f97316" },
+    { label: "VALUE SCORE", value: valid ? `${valueScore} / 10` : "—", sub: "deal quality index", color: "#6366f1" },
+    { label: "BREAK-EVEN UNITS", value: valid ? `${breakEven}×` : "—", sub: "to offset 1× full", color: "#22c55e" },
+    { label: "ABSOLUTE SAVING", value: valid ? `${formatNOK(savings)} kr` : "—", sub: "per unit purchased", color: "#f59e0b" },
   ];
 
-  const maxBar = Math.max(p28, 200_000) * 1.05;
-  const barData = [
-    { year: "2025", base: p25, inc26: 0, inc27: 0, inc28: 0 },
-    { year: "2026", base: p25, inc26, inc27: 0, inc28: 0 },
-    { year: "2027", base: p25, inc26, inc27, inc28: 0 },
-    { year: "2028", base: p25, inc26, inc27, inc28 },
-  ];
+  return (
+    <div className="deep-grid">
+      {items.map((item, i) => (
+        <div key={i} style={{ padding: "4px 0" }}>
+          <div className="mono-label" style={{ marginBottom: 6 }}>{item.label}</div>
+          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: "clamp(15px, 3.5vw, 20px)", fontWeight: 700, color: item.color, wordBreak: "break-word" }}>{item.value}</div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "#334155", marginTop: 3 }}>{item.sub}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-  const activeData = years.find(y => y.year === activeYear);
+// ─── Scale Table ─────────────────────────────────────────────────────────────
+function ScaleTable({ original, current, savings, pctOff, tier }) {
+  return (
+    <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 380 }}>
+        <thead>
+          <tr>
+            {["Units", "Full Total", "Sale Total", "Saved", "%"].map(h => (
+              <th key={h} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "#475569", letterSpacing: 2, textAlign: "left", paddingBottom: 10, borderBottom: "1px solid #1e293b", paddingRight: 14 }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {[1, 2, 3, 5, 10, 20].map(n => (
+            <tr key={n} style={{ borderBottom: "1px solid #0f172a" }}>
+              <td style={{ padding: "10px 14px 10px 0", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#64748b" }}>{n}×</td>
+              <td style={{ padding: "10px 14px 10px 0", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#94a3b8" }}>{formatNOK(original * n)} kr</td>
+              <td style={{ padding: "10px 14px 10px 0", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#22c55e" }}>{formatNOK(current * n)} kr</td>
+              <td style={{ padding: "10px 14px 10px 0", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#f59e0b", fontWeight: 600 }}>{formatNOK(savings * n)} kr</td>
+              <td style={{ padding: "10px 0" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ width: 44, height: 4, background: "#1e293b", borderRadius: 99, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${Math.min(pctOff, 100)}%`, background: tier.color, borderRadius: 99 }} />
+                  </div>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: "#475569" }}>{formatNOK(pctOff)}%</span>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
-  // Slider marks
-  const marks = [200_000, 500_000, 1_000_000, 1_500_000, 2_000_000];
+// ─── Section Shell ───────────────────────────────────────────────────────────
+function Section({ title, children, delay = 0 }) {
+  return (
+    <div className="section-card" style={{ animationDelay: `${delay}ms` }}>
+      <div className="mono-label" style={{ marginBottom: 18, letterSpacing: 3 }}>◈ {title}</div>
+      {children}
+    </div>
+  );
+}
 
-  const sliderBg = (() => {
-    const pct = ((price - 200_000) / (2_000_000 - 200_000)) * 100;
-    return `linear-gradient(90deg, #00c9a7 0%, #2979ff ${pct}%, rgba(255,255,255,0.12) ${pct}%)`;
-  })();
+// ─── Main App ────────────────────────────────────────────────────────────────
+export default function DealAnalyzer() {
+  const [originalInput, setOriginalInput] = useState("");
+  const [currentInput, setCurrentInput] = useState("");
 
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js')
-        .then(registration => {
-          registration.addEventListener('updatefound', () => {
-            const newWorker = registration.installing;
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                // New content is available, notify user
-                if (confirm('New version available! Would you like to update?')) {
-                  window.location.reload();
-                }
-              }
-            });
-          });
-        })
-        .catch(error => console.log('Service worker registration failed:', error));
-    }
-  }, []);
+  const original = parseNOK(originalInput);
+  const current = parseNOK(currentInput);
+  const valid = !isNaN(original) && !isNaN(current) && original > 0 && current > 0;
+  const savings = valid ? original - current : 0;
+  const pctOff = valid ? (savings / original) * 100 : 0;
+  const tier = getDealTier(pctOff);
 
   return (
     <>
-      {/* google fonts */}
-      <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
-
       <style>{`
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #080d1a; overflow-x: hidden; }
-        input[type=range] { -webkit-appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; cursor: pointer; }
-        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(circle, #00e5b4, #00a87e); border: 2px solid rgba(255,255,255,0.3); box-shadow: 0 0 14px #00e5b460; cursor: grab; transition: transform 0.15s; }
-        input[type=range]::-webkit-slider-thumb:active { transform: scale(1.25); cursor: grabbing; }
-        input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(circle, #00e5b4, #00a87e); border: 2px solid rgba(255,255,255,0.3); cursor: grab; }
-        @keyframes fadeUp { from { opacity:0; transform:translateY(12px);} to { opacity:1; transform:translateY(0);} }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
-        .fade-up { animation: fadeUp 0.5s ease both; }
-        ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #1a3a5c; border-radius: 2px; }
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+          background: #020817;
+          color: #f1f5f9;
+          min-height: 100vh;
+          font-family: 'Syne', sans-serif;
+        }
+
+        input::placeholder { color: #334155; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 99px; }
+
+        @keyframes fadeSlideUp {
+          from { opacity: 0; transform: translateY(14px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes scanline {
+          from { transform: translateY(-100%); }
+          to   { transform: translateY(100vh); }
+        }
+
+        .mono-label {
+          font-family: 'IBM Plex Mono', monospace;
+          font-size: 10px;
+          color: #475569;
+          letter-spacing: 2px;
+          text-transform: uppercase;
+          display: block;
+        }
+
+        /* ── Section card ── */
+        .section-card {
+          background: linear-gradient(135deg, #0a0f1e, #0f172a);
+          border: 1px solid #1e293b;
+          border-radius: 20px;
+          padding: 22px 20px;
+          animation: fadeSlideUp 0.55s ease both;
+        }
+
+        /* ── Stat card ── */
+        .stat-card {
+          background: linear-gradient(135deg, #0f172a 60%, #1e293b);
+          border: 1px solid #1e2940;
+          border-radius: 16px;
+          padding: 16px 14px;
+          position: relative;
+          overflow: hidden;
+          animation: fadeSlideUp 0.6s ease both;
+        }
+
+        /* ── Verdict banner ── */
+        .verdict-banner {
+          border-radius: 16px;
+          padding: 16px 20px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          animation: fadeSlideUp 0.5s ease 0.1s both;
+        }
+
+        /* ── Gauge + stats side by side (desktop) ── */
+        .gauge-stats {
+          display: grid;
+          grid-template-columns: 220px 1fr;
+          gap: 20px;
+          align-items: start;
+        }
+
+        .gauge-box {
+          background: linear-gradient(135deg, #0a0f1e, #0f172a);
+          border: 1px solid #1e293b;
+          border-radius: 20px;
+          padding: 22px 18px 18px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 16px;
+          animation: fadeSlideUp 0.5s ease 0.2s both;
+        }
+
+        /* 2-col stats grid stays 2 cols on all sizes */
+        .stats-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+          align-content: start;
+        }
+
+        /* ── Deep analytics 2-col ── */
+        .deep-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 20px 16px;
+        }
+
+        /* ── Input row ── */
+        .input-row {
+          display: flex;
+          gap: 12px;
+          align-items: flex-end;
+        }
+
+        .arrow-divider {
+          font-size: 20px;
+          color: #334155;
+          padding-bottom: 15px;
+          flex-shrink: 0;
+        }
+
+        /* ═══════════════════════════════════
+           MOBILE  ≤ 640px
+        ═══════════════════════════════════ */
+        @media (max-width: 640px) {
+
+          /* Stack gauge above stats */
+          .gauge-stats {
+            grid-template-columns: 1fr;
+          }
+
+          /* Centre the gauge panel */
+          .gauge-box {
+            padding: 20px 16px 16px;
+          }
+
+          /* Keep stats 2-col on phone */
+          .stats-grid {
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+          }
+
+          /* Stack price inputs vertically */
+          .input-row {
+            flex-direction: column;
+          }
+          .arrow-divider {
+            display: none;
+          }
+
+          /* Verdict banner: allow text to wrap on very small screens */
+          .verdict-banner {
+            padding: 14px 16px;
+            flex-wrap: wrap;
+          }
+
+          .section-card {
+            padding: 18px 16px;
+            border-radius: 16px;
+          }
+        }
+
+        /* ═══════════════════════════════════
+           TINY  ≤ 390px  (iPhone SE etc.)
+        ═══════════════════════════════════ */
+        @media (max-width: 390px) {
+          .stats-grid {
+            grid-template-columns: 1fr;
+          }
+          .deep-grid {
+            grid-template-columns: 1fr;
+          }
+        }
       `}</style>
 
-      <Aurora />
+      {/* Root */}
+      <div style={{
+        minHeight: "100vh",
+        background: "#020817",
+        backgroundImage: `
+          radial-gradient(ellipse 80% 60% at 50% -20%, #f59e0b0a 0%, transparent 70%),
+          radial-gradient(ellipse 40% 40% at 10% 80%, #6366f108 0%, transparent 60%),
+          repeating-linear-gradient(0deg, transparent, transparent 39px, #ffffff03 39px, #ffffff03 40px),
+          repeating-linear-gradient(90deg, transparent, transparent 39px, #ffffff03 39px, #ffffff03 40px)
+        `,
+        paddingBottom: 60,
+        overflowX: "hidden",
+      }}>
 
-      <div style={{ position: "relative", zIndex: 1, minHeight: "100vh", maxWidth: 520, margin: "0 auto", padding: "20px 16px 40px" }}>
+        {/* Scanline */}
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, height: "2px", background: "linear-gradient(90deg, transparent, #f59e0b08, transparent)", animation: "scanline 8s linear infinite", pointerEvents: "none", zIndex: 0 }} />
 
-        {/* ── header ── */}
-        <div className="fade-up" style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(0,229,180,0.1)", border: "1px solid rgba(0,229,180,0.25)", borderRadius: 20, padding: "4px 14px", marginBottom: 12 }}>
-            <span style={{ fontSize: 14 }}>🇳🇴</span>
-            <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 12, fontWeight: 600, color: "#00e5b4", letterSpacing: 1, textTransform: "uppercase" }}>Elbil MVA-kalkulator</span>
+        {/* ── Header ── */}
+        <div style={{ borderBottom: "1px solid #0f172a", background: "linear-gradient(180deg, #020817, #0a0f1e)", padding: "18px 20px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", animation: "fadeSlideUp 0.4s ease both", position: "sticky", top: 0, zIndex: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+            <div style={{ width: 36, height: 36, background: "linear-gradient(135deg, #f59e0b, #d97706)", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, boxShadow: "0 0 18px #f59e0b44", flexShrink: 0 }}>⚖️</div>
+            <div>
+              <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 17, letterSpacing: -0.5 }}>
+                DEAL<span style={{ color: "#f59e0b" }}>METER</span>
+              </div>
+              <div className="mono-label">NOK PRICE ANALYZER</div>
+            </div>
           </div>
-          <h1 style={{ fontFamily: "'Bebas Neue', cursive", fontSize: "clamp(32px,8vw,48px)", letterSpacing: 2, color: "#e8f4ff", lineHeight: 1, marginBottom: 6 }}>
-            MVA PÅ ELBILER
-          </h1>
-          <p style={{ fontFamily: "'Figtree', sans-serif", fontSize: 13, color: "rgba(160,200,235,0.65)", lineHeight: 1.5 }}>
-            Beregn prisøkning fra 2026 til 2028 basert på Stortingets vedtak
-          </p>
+          <div className="mono-label" style={{ fontSize: 10 }}>
+            {new Date().toLocaleDateString("nb-NO", { day: "2-digit", month: "short", year: "numeric" })}
+          </div>
         </div>
 
-        {/* ── slider card ── */}
-        <div className="fade-up" style={{ animationDelay: "0.08s", background: "rgba(10,20,45,0.7)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: "20px 18px 18px", marginBottom: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 6 }}>
-            <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 12, fontWeight: 600, color: "rgba(160,200,235,0.55)", textTransform: "uppercase", letterSpacing: 1 }}>Pris i 2025</span>
-            <div style={{ textAlign: "right" }}>
-              <span style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 30, color: "#00e5b4", letterSpacing: 1 }}>
-                <AnimNum value={price} />
-              </span>
-              <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 13, color: "rgba(160,200,235,0.55)", marginLeft: 4 }}>kr</span>
+        {/* ── Content ── */}
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 16px", display: "flex", flexDirection: "column", gap: 18 }}>
+
+          {/* Inputs */}
+          <Section title="Enter Prices" delay={100}>
+            <div className="input-row">
+              <NOKInput label="Original Price" value={originalInput} onChange={setOriginalInput} placeholder="2.999,00" />
+              <div className="arrow-divider">→</div>
+              <NOKInput label="Current / Sale Price" value={currentInput} onChange={setCurrentInput} placeholder="1.499,00" />
+            </div>
+          </Section>
+
+          {/* Verdict */}
+          {valid && pctOff > 0 && <VerdictBanner tier={tier} pct={pctOff} />}
+          {valid && pctOff <= 0 && (
+            <div style={{ background: "#ef444410", border: "1px solid #ef444430", borderRadius: 14, padding: "14px 18px", fontFamily: "'Syne', sans-serif", fontSize: 14, color: "#ef4444", animation: "fadeSlideUp 0.4s ease both" }}>
+              ⚠️ The sale price is not lower than the original price.
+            </div>
+          )}
+
+          {/* Gauge + Stats */}
+          <div className="gauge-stats">
+            <div className="gauge-box">
+              <CircularGauge score={valid ? tier.score : 0} color={valid ? tier.color : "#1e293b"} size={190} />
+              <SavingsMeter savings={savings} original={original} />
+            </div>
+            <div className="stats-grid">
+              <StatCard label="You Save" value={valid && savings >= 0 ? `${formatNOK(savings)} kr` : "—"} sub={valid ? "per unit" : "enter prices above"} accent="#22c55e" delay={220} />
+              <StatCard label="Percentage Off" value={valid && pctOff > 0 ? `${formatNOK(pctOff)}%` : "—"} sub={valid ? `of ${formatNOK(original)} kr` : ""} accent="#f59e0b" delay={270} />
+              <StatCard label="Sale Price" value={valid ? `${formatNOK(current)} kr` : "—"} sub={valid ? "current offer" : ""} accent="#38bdf8" delay={320} />
+              <StatCard label="You Pay" value={valid ? `${formatNOK((current / original) * 100)}%` : "—"} sub={valid ? "of original price" : ""} accent="#a78bfa" delay={370} />
             </div>
           </div>
 
-          <input
-            type="range"
-            min={200_000}
-            max={2_000_000}
-            step={5_000}
-            value={price}
-            style={{ background: sliderBg }}
-            onChange={(e) => setPrice(+e.target.value)}
-            onMouseDown={() => setIsDragging(true)}
-            onMouseUp={() => setIsDragging(false)}
-            onTouchStart={() => setIsDragging(true)}
-            onTouchEnd={() => setIsDragging(false)}
-          />
+          {/* Price comparison */}
+          <Section title="Price Comparison" delay={300}>
+            <PriceBar original={valid ? original : NaN} current={valid ? current : NaN} />
+          </Section>
 
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
-            {marks.map(m => (
-              <button key={m} onClick={() => setPrice(m)} style={{ fontFamily: "'Figtree', sans-serif", fontSize: 10, color: price === m ? "#00e5b4" : "rgba(160,200,235,0.35)", background: "none", border: "none", cursor: "pointer", padding: 0, transition: "color 0.2s" }}>
-                {fmtShort(m)}
-              </button>
-            ))}
-          </div>
-        </div>
+          {/* Deep analytics */}
+          <Section title="Deep Analytics" delay={360}>
+            <DeepAnalytics original={valid ? original : NaN} current={valid ? current : NaN} />
+          </Section>
 
-        {/* ── year cards ── */}
-        <div className="fade-up" style={{ animationDelay: "0.12s", display: "flex", gap: 8, marginBottom: 14 }}>
-          {years.map(y => (
-            <YearCard key={y.year} {...y} active={activeYear === y.year} onClick={() => setActiveYear(y.year)} />
-          ))}
-        </div>
+          {/* Scale table */}
+          {valid && savings > 0 && (
+            <Section title="Savings at Scale" delay={420}>
+              <ScaleTable original={original} current={current} savings={savings} pctOff={pctOff} tier={tier} />
+            </Section>
+          )}
 
-        {/* ── selected year detail ── */}
-        <div className="fade-up" key={activeYear} style={{ animationDelay: "0.0s", background: "rgba(10,20,45,0.7)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: "18px", marginBottom: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <span style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, color: "#e8f4ff", letterSpacing: 1 }}>📋 PRISOVERSIKT {activeYear}</span>
-            {activeData && !activeData.isBase && activeData.increase > 0 && (
-              <div style={{ background: "rgba(255,94,120,0.15)", border: "1px solid rgba(255,94,120,0.3)", borderRadius: 8, padding: "3px 10px" }}>
-                <span style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 14, color: "#ff5e78", letterSpacing: 0.5 }}>
-                  +{fmt(activeData.increase)}
-                </span>
-              </div>
-            )}
-            {activeData && activeData.isBase && (
-              <div style={{ background: "rgba(41,121,255,0.15)", border: "1px solid rgba(41,121,255,0.3)", borderRadius: 8, padding: "3px 10px" }}>
-                <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: "#5b9fff", fontWeight: 600 }}>Utgangspris</span>
-              </div>
-            )}
-          </div>
-
-          {/* big price */}
-          <div style={{ textAlign: "center", padding: "12px 0 16px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-            <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: "rgba(160,200,235,0.5)", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 4 }}>Ny pris</div>
-            <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: "clamp(38px,10vw,54px)", letterSpacing: 2, background: "linear-gradient(135deg, #e8f4ff, #00e5b4)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-              <AnimNum value={activeData?.price || p25} />
-              <span style={{ fontSize: "0.45em", letterSpacing: 1, marginLeft: 6 }}>NOK</span>
-            </div>
-          </div>
-
-          {/* breakdown rows */}
-          <div style={{ marginTop: 12 }}>
-            <BreakdownRow label="Grunnpris (2025)" amount={p25} color="#5b9fff" show={true} />
-            <BreakdownRow label="MVA-økning 2026 (300k–500k grense)" amount={inc26} color="#00e5b4" show={activeYear !== "2025"} />
-            <BreakdownRow label="MVA-økning 2027 (150k–300k grense)" amount={inc27} color="#f7a600" show={activeYear === "2027" || activeYear === "2028"} />
-            <BreakdownRow label="MVA-økning 2028 (full MVA)" amount={inc28} color="#ff5e78" show={activeYear === "2028"} />
-          </div>
-
-          {/* total increase */}
-          {activeYear !== "2025" && (
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, padding: "10px 0 0" }}>
-              <span style={{ fontFamily: "'Figtree', sans-serif", fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>Totalt økning fra 2025</span>
-              <span style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 18, color: activeData?.increase + (activeYear === "2027" ? inc26 : activeYear === "2028" ? totalInc - activeData?.increase || 0 : 0) > 0 ? "#ff5e78" : "#00e5b4", letterSpacing: 0.5 }}>
-                {(() => {
-                  const tot = activeYear === "2026" ? inc26 : activeYear === "2027" ? inc26 + inc27 : totalInc;
-                  return tot > 0 ? `+${fmt(tot)}` : "Ingen økning";
-                })()}
-              </span>
+          {/* Empty state */}
+          {!valid && (
+            <div style={{ textAlign: "center", padding: "36px 24px", animation: "fadeSlideUp 0.6s ease 0.5s both" }}>
+              <div style={{ fontSize: 42, marginBottom: 12 }}>🏷️</div>
+              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700, color: "#334155", marginBottom: 8 }}>Enter prices to analyze the deal</div>
+              <div className="mono-label" style={{ letterSpacing: 2, fontSize: 10 }}>Use comma as decimal — e.g. 1.299,90</div>
             </div>
           )}
         </div>
-
-        {/* ── stacked bar chart ── */}
-        <div className="fade-up" style={{ animationDelay: "0.16s", background: "rgba(10,20,45,0.7)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: "18px", marginBottom: 14 }}>
-          <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, color: "rgba(160,200,235,0.7)", letterSpacing: 1, marginBottom: 14 }}>📊 PRISUTVIKLING PER ÅR</div>
-          <StackedBar data={barData} max={maxBar} />
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", marginTop: 14 }}>
-            <LegendDot color="#1e5a80" label="Grunnpris" />
-            <LegendDot color="#00e5b4" label="+MVA 2026" />
-            <LegendDot color="#f7a600" label="+MVA 2027" />
-            <LegendDot color="#ff5e78" label="+MVA 2028" />
-          </div>
-        </div>
-
-        {/* ── total increase summary ── */}
-        <div className="fade-up" style={{ animationDelay: "0.2s", background: "rgba(10,20,45,0.7)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: "18px", marginBottom: 14 }}>
-          <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, color: "rgba(160,200,235,0.7)", letterSpacing: 1, marginBottom: 14 }}>⚡ SAMLET PRISØKNING 2025 → 2028</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            {[
-              { label: "Prisøkning 2026", val: inc26, color: "#00e5b4" },
-              { label: "Prisøkning 2027", val: inc27, color: "#f7a600" },
-              { label: "Prisøkning 2028", val: inc28, color: "#ff5e78" },
-              { label: "Total økning", val: totalInc, color: "#e8f4ff", big: true },
-            ].map(({ label, val, color, big }) => (
-              <div key={label} style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${val > 0 ? color + "33" : "rgba(255,255,255,0.06)"}`, borderRadius: 12, padding: "12px 14px" }}>
-                <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 11, color: "rgba(160,200,235,0.5)", marginBottom: 4 }}>{label}</div>
-                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: big ? 22 : 18, color: val > 0 ? color : "rgba(160,200,235,0.25)", letterSpacing: 0.5 }}>
-                  {val > 0 ? <><AnimNum value={val} prefix="+" suffix=" kr" /></> : "—"}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* ── info box ── */}
-        <div className="fade-up" style={{ animationDelay: "0.24s", background: "rgba(0,180,160,0.06)", border: "1px solid rgba(0,180,160,0.2)", borderRadius: 16, padding: "14px 16px" }}>
-          <div style={{ fontFamily: "'Figtree', sans-serif", fontSize: 12, color: "rgba(160,200,235,0.6)", lineHeight: 1.6 }}>
-            <strong style={{ color: "#00e5b4", display: "block", marginBottom: 4 }}>ℹ️ Regelendringer</strong>
-            <strong style={{ color: "rgba(160,200,235,0.8)" }}>2025:</strong> Fri for MVA under 500 000 kr · MVA 25% over 500 000 kr<br />
-            <strong style={{ color: "rgba(160,200,235,0.8)" }}>2026:</strong> Grense senket til 300 000 kr<br />
-            <strong style={{ color: "rgba(160,200,235,0.8)" }}>2027:</strong> Grense senket til 150 000 kr<br />
-            <strong style={{ color: "rgba(160,200,235,0.8)" }}>2028:</strong> Full MVA (25%) på hele kjøpsprisen
-          </div>
-        </div>
-
       </div>
     </>
   );
